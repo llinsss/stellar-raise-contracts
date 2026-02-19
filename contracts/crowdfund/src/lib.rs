@@ -13,6 +13,7 @@ pub enum Status {
     Active,
     Successful,
     Refunded,
+    Cancelled,
 }
 
 #[derive(Clone)]
@@ -212,6 +213,48 @@ impl CrowdfundContract {
 
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
         env.storage().instance().set(&DataKey::Status, &Status::Refunded);
+    }
+
+    /// Cancel the campaign and refund all contributors — callable only by
+    /// the creator while the campaign is still Active.
+    pub fn cancel(env: Env) {
+        let status: Status = env.storage().instance().get(&DataKey::Status).unwrap();
+        if status != Status::Active {
+            panic!("campaign is not active");
+        }
+
+        let creator: Address = env.storage().instance().get(&DataKey::Creator).unwrap();
+        creator.require_auth();
+
+        let token_address: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        let token_client = token::Client::new(&env, &token_address);
+
+        let contributors: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Contributors)
+            .unwrap();
+
+        for contributor in contributors.iter() {
+            let amount: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::Contribution(contributor.clone()))
+                .unwrap_or(0);
+            if amount > 0 {
+                token_client.transfer(
+                    &env.current_contract_address(),
+                    &contributor,
+                    &amount,
+                );
+                env.storage()
+                    .instance()
+                    .set(&DataKey::Contribution(contributor), &0i128);
+            }
+        }
+
+        env.storage().instance().set(&DataKey::TotalRaised, &0i128);
+        env.storage().instance().set(&DataKey::Status, &Status::Cancelled);
     }
 
     // ── View helpers ────────────────────────────────────────────────────

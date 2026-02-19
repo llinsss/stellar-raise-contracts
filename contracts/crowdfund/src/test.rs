@@ -266,3 +266,76 @@ fn test_double_refund_panics() {
     client.refund();
     client.refund(); // should panic — status is Refunded
 }
+
+#[test]
+fn test_cancel_with_no_contributions() {
+    let (env, client, creator, token_address, _admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    client.initialize(&creator, &token_address, &goal, &deadline);
+
+    client.cancel();
+
+    assert_eq!(client.total_raised(), 0);
+}
+
+#[test]
+fn test_cancel_with_contributions() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    client.initialize(&creator, &token_address, &goal, &deadline);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &alice, 300_000);
+    mint_to(&env, &token_address, &admin, &bob, 200_000);
+
+    client.contribute(&alice, &300_000);
+    client.contribute(&bob, &200_000);
+
+    client.cancel();
+
+    let token_client = token::Client::new(&env, &token_address);
+    assert_eq!(token_client.balance(&alice), 300_000);
+    assert_eq!(token_client.balance(&bob), 200_000);
+    assert_eq!(client.total_raised(), 0);
+}
+
+#[test]
+#[should_panic]
+fn test_cancel_by_non_creator_panics() {
+    let env = Env::default();
+    let contract_id = env.register(CrowdfundContract, ());
+    let client = CrowdfundContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract_id = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_address = token_contract_id.address();
+
+    let creator = Address::generate(&env);
+    let non_creator = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    client.initialize(&creator, &token_address, &goal, &deadline);
+
+    env.mock_all_auths_allowing_non_root_auth();
+    env.set_auths(&[]);
+    
+    client.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &non_creator,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "cancel",
+            args: soroban_sdk::vec![&env],
+            sub_invokes: &[],
+        },
+    }]);
+
+    client.cancel();
+}
