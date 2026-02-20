@@ -1095,3 +1095,83 @@ fn test_refund_single_updates_contribution_to_zero() {
 
     assert_eq!(client.contribution(&contributor), 0);
 }
+
+// ── Campaign Info Tests ────────────────────────────────────────────────────
+
+#[test]
+fn test_creator() {
+    let (env, client, creator, token_address, _admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution);
+
+    assert_eq!(client.creator(), creator);
+}
+
+#[test]
+fn test_get_campaign_info_initial() {
+    let (env, client, creator, token_address, _admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution);
+
+    let info = client.get_campaign_info();
+
+    assert_eq!(info.creator, creator);
+    assert_eq!(info.token, token_address);
+    assert_eq!(info.goal, goal);
+    assert_eq!(info.deadline, deadline);
+    assert_eq!(info.total_raised, 0);
+}
+
+#[test]
+fn test_get_campaign_info_with_contributions() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &alice, 600_000);
+    mint_to(&env, &token_address, &admin, &bob, 300_000);
+
+    client.contribute(&alice, &600_000);
+    client.contribute(&bob, &300_000);
+
+    let info = client.get_campaign_info();
+
+    assert_eq!(info.creator, creator);
+    assert_eq!(info.token, token_address);
+    assert_eq!(info.goal, goal);
+    assert_eq!(info.deadline, deadline);
+    assert_eq!(info.total_raised, 900_000);
+}
+
+#[test]
+fn test_get_campaign_info_after_goal_reached() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution);
+
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 1_500_000);
+    client.contribute(&contributor, &1_500_000);
+
+    let info = client.get_campaign_info();
+
+    assert_eq!(info.creator, creator);
+    assert_eq!(info.token, token_address);
+    assert_eq!(info.goal, goal);
+    assert_eq!(info.deadline, deadline);
+    assert_eq!(info.total_raised, 1_500_000);
+}
