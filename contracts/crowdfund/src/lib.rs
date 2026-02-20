@@ -99,6 +99,8 @@ pub enum DataKey {
     SocialLinks,
     /// Platform configuration for fee handling.
     PlatformConfig,
+    /// List of stretch goal milestones above the primary goal.
+    StretchGoals,
 }
 
 // ── Contract Error ──────────────────────────────────────────────────────────
@@ -523,6 +525,56 @@ impl CrowdfundContract {
             .instance()
             .get(&DataKey::Roadmap)
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Add a stretch goal milestone to the campaign.
+    ///
+    /// Only the creator can add stretch goals. The milestone must be greater
+    /// than the primary goal.
+    pub fn add_stretch_goal(env: Env, milestone: i128) {
+        let creator: Address = env.storage().instance().get(&DataKey::Creator).unwrap();
+        creator.require_auth();
+
+        let goal: i128 = env.storage().instance().get(&DataKey::Goal).unwrap();
+        if milestone <= goal {
+            panic!("stretch goal must be greater than primary goal");
+        }
+
+        let mut stretch_goals: Vec<i128> = env
+            .storage()
+            .instance()
+            .get(&DataKey::StretchGoals)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        stretch_goals.push_back(milestone);
+        env.storage()
+            .instance()
+            .set(&DataKey::StretchGoals, &stretch_goals);
+    }
+
+    /// Returns the next unmet stretch goal milestone.
+    ///
+    /// Returns 0 if there are no stretch goals or all have been met.
+    pub fn current_milestone(env: Env) -> i128 {
+        let total_raised: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalRaised)
+            .unwrap_or(0);
+
+        let stretch_goals: Vec<i128> = env
+            .storage()
+            .instance()
+            .get(&DataKey::StretchGoals)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        for milestone in stretch_goals.iter() {
+            if total_raised < milestone {
+                return milestone;
+            }
+        }
+
+        0
     }
     pub fn total_raised(env: Env) -> i128 {
         env.storage()
