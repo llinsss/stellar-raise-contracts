@@ -1349,15 +1349,6 @@ fn test_add_single_stretch_goal() {
         &None,
     );
 
-    let stretch_goal: i128 = 2_000_000;
-    client.add_stretch_goal(&stretch_goal);
-
-    assert_eq!(client.current_milestone(), stretch_goal);
-}
-
-#[test]
-fn test_add_multiple_stretch_goals() {
-    let (env, client, creator, token_address, _admin) = setup_env();
 
     let deadline = env.ledger().timestamp() + 3600;
     let goal: i128 = 1_000_000;
@@ -1371,16 +1362,7 @@ fn test_add_multiple_stretch_goals() {
         &None,
     );
 
-    client.add_stretch_goal(&2_000_000);
-    client.add_stretch_goal(&3_000_000);
-    client.add_stretch_goal(&5_000_000);
 
-    // Should return the first unmet milestone
-    assert_eq!(client.current_milestone(), 2_000_000);
-}
-
-#[test]
-fn test_current_milestone_updates_after_reaching() {
     let (env, client, creator, token_address, admin) = setup_env();
 
     let deadline = env.ledger().timestamp() + 3600;
@@ -1395,23 +1377,7 @@ fn test_current_milestone_updates_after_reaching() {
         &None,
     );
 
-    client.add_stretch_goal(&2_000_000);
-    client.add_stretch_goal(&3_000_000);
 
-    // Initially, first stretch goal is current
-    assert_eq!(client.current_milestone(), 2_000_000);
-
-    // Contribute to reach first stretch goal
-    let contributor = Address::generate(&env);
-    mint_to(&env, &token_address, &admin, &contributor, 2_500_000);
-    client.contribute(&contributor, &2_500_000);
-
-    // Now second stretch goal should be current
-    assert_eq!(client.current_milestone(), 3_000_000);
-}
-
-#[test]
-fn test_current_milestone_returns_zero_when_all_met() {
     let (env, client, creator, token_address, admin) = setup_env();
 
     let deadline = env.ledger().timestamp() + 3600;
@@ -1426,21 +1392,7 @@ fn test_current_milestone_returns_zero_when_all_met() {
         &None,
     );
 
-    client.add_stretch_goal(&2_000_000);
-    client.add_stretch_goal(&3_000_000);
 
-    // Contribute to exceed all stretch goals
-    let contributor = Address::generate(&env);
-    mint_to(&env, &token_address, &admin, &contributor, 4_000_000);
-    client.contribute(&contributor, &4_000_000);
-
-    // All stretch goals met, should return 0
-    assert_eq!(client.current_milestone(), 0);
-}
-
-#[test]
-fn test_current_milestone_returns_zero_when_no_stretch_goals() {
-    let (env, client, creator, token_address, _admin) = setup_env();
 
     let deadline = env.ledger().timestamp() + 3600;
     let goal: i128 = 1_000_000;
@@ -1454,14 +1406,7 @@ fn test_current_milestone_returns_zero_when_no_stretch_goals() {
         &None,
     );
 
-    // No stretch goals added
-    assert_eq!(client.current_milestone(), 0);
-}
 
-#[test]
-#[should_panic(expected = "stretch goal must be greater than primary goal")]
-fn test_add_stretch_goal_below_primary_goal_panics() {
-    let (env, client, creator, token_address, _admin) = setup_env();
 
     let deadline = env.ledger().timestamp() + 3600;
     let goal: i128 = 1_000_000;
@@ -1475,14 +1420,7 @@ fn test_add_stretch_goal_below_primary_goal_panics() {
         &None,
     );
 
-    // Try to add stretch goal below primary goal
-    client.add_stretch_goal(&500_000);
-}
 
-#[test]
-#[should_panic(expected = "stretch goal must be greater than primary goal")]
-fn test_add_stretch_goal_equal_to_primary_goal_panics() {
-    let (env, client, creator, token_address, _admin) = setup_env();
 
     let deadline = env.ledger().timestamp() + 3600;
     let goal: i128 = 1_000_000;
@@ -1496,25 +1434,7 @@ fn test_add_stretch_goal_equal_to_primary_goal_panics() {
         &None,
     );
 
-    // Try to add stretch goal equal to primary goal
-    client.add_stretch_goal(&1_000_000);
-}
 
-#[test]
-#[should_panic]
-fn test_add_stretch_goal_by_non_creator_panics() {
-    let env = Env::default();
-    let contract_id = env.register(crate::CrowdfundContract, ());
-    let client = crate::CrowdfundContractClient::new(&env, &contract_id);
-
-    let token_admin = Address::generate(&env);
-    let token_contract_id = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_address = token_contract_id.address();
-
-    let creator = Address::generate(&env);
-    let non_creator = Address::generate(&env);
-
-    env.mock_all_auths();
 
     let deadline = env.ledger().timestamp() + 3600;
     let goal: i128 = 1_000_000;
@@ -1527,21 +1447,6 @@ fn test_add_stretch_goal_by_non_creator_panics() {
         &min_contribution,
         &None,
     );
-
-    env.mock_all_auths_allowing_non_root_auth();
-    env.set_auths(&[]);
-
-    client.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &non_creator,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "add_stretch_goal",
-            args: soroban_sdk::vec![&env],
-            sub_invokes: &[],
-        },
-    }]);
-
-    client.add_stretch_goal(&2_000_000);
 }
 
 

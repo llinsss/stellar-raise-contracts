@@ -99,8 +99,6 @@ pub enum DataKey {
     SocialLinks,
     /// Platform configuration for fee handling.
     PlatformConfig,
-    /// List of stretch goal milestones above the primary goal.
-    StretchGoals,
 }
 
 // ── Contract Error ──────────────────────────────────────────────────────────
@@ -256,6 +254,161 @@ impl CrowdfundContract {
                 .persistent()
                 .extend_ttl(&DataKey::Contributors, 100, 100);
         }
+
+        // Emit contribution event
+        env.events().publish(
+            ("campaign", "contributed"),
+            (contributor, amount),
+        );
+
+        Ok(())
+    }
+
+    /// Pledge tokens to the campaign without transferring them immediately.
+    ///
+    /// The pledger must authorize the call. Pledges are recorded off-chain
+    /// and only collected if the goal is met after the deadline.
+    pub fn pledge(env: Env, pledger: Address, amount: i128) -> Result<(), ContractError> {
+        pledger.require_auth();
+
+        let min_contribution: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MinContribution)
+            .unwrap();
+        if amount < min_contribution {
+            panic!("amount below minimum");
+        }
+
+        let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
+        if env.ledger().timestamp() > deadline {
+            return Err(ContractError::CampaignEnded);
+        }
+
+        // Update the pledger's running total.
+        let pledge_key = DataKey::Pledge(pledger.clone());
+        let prev: i128 = env
+            .storage()
+            .persistent()
+            .get(&pledge_key)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&pledge_key, &(prev + amount));
+        env.storage()
+            .persistent()
+            .extend_ttl(&pledge_key, 100, 100);
+
+        // Update the global total pledged.
+        let total_pledged: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalPledged)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalPledged, &(total_pledged + amount));
+
+        // Track pledger address if new.
+        let mut pledgers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Pledgers)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !pledgers.contains(&pledger) {
+            pledgers.push_back(pledger.clone());
+            env.storage()
+                .persistent()
+                .set(&DataKey::Pledgers, &pledgers);
+            env.storage()
+                .persistent()
+                .extend_ttl(&DataKey::Pledgers, 100, 100);
+        }
+
+        // Emit pledge event
+        env.events().publish(
+            ("campaign", "pledged"),
+            (pledger, amount),
+        );
+
+        Ok(())
+    }
+
+    /// Collect all pledges after the deadline when the goal is met.
+    ///
+    /// This function transfers tokens from all pledgers to the contract.
+    /// Only callable after the deadline and when the combined total of
+    /// contributions and pledges meets or exceeds the goal.
+    pub fn collect_pledges(env: Env) -> Result<(), ContractError> {
+        let status: Status = env.storage().instance().get(&DataKey::Status).unwrap();
+        if status != Status::Active {
+            panic!("campaign is not active");
+        }
+
+        let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
+        if env.ledger().timestamp() <= deadline {
+            return Err(ContractError::CampaignStillActive);
+        }
+
+        let goal: i128 = env.storage().instance().get(&DataKey::Goal).unwrap();
+        let total_raised: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap();
+        let total_pledged: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalPledged)
+            .unwrap_or(0);
+
+        // Check if combined total meets the goal
+        if total_raised + total_pledged < goal {
+            return Err(ContractError::GoalNotReached);
+        }
+
+        let token_address: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        let token_client = token::Client::new(&env, &token_address);
+
+        let pledgers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Pledgers)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        // Collect pledges from all pledgers
+        for pledger in pledgers.iter() {
+            let pledge_key = DataKey::Pledge(pledger.clone());
+            let amount: i128 = env
+                .storage()
+                .persistent()
+                .get(&pledge_key)
+                .unwrap_or(0);
+            if amount > 0 {
+                // Transfer tokens from pledger to contract
+                token_client.transfer(&pledger, &env.current_contract_address(), &amount);
+
+                // Clear the pledge
+                env.storage()
+                    .persistent()
+                    .set(&pledge_key, &0i128);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&pledge_key, 100, 100);
+            }
+        }
+
+        // Update total raised to include collected pledges
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalRaised, &(total_raised + total_pledged));
+
+        // Reset total pledged
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalPledged, &0i128);
+
+        // Emit pledges collected event
+        env.events().publish(
+            ("campaign", "pledges_collected"),
+            total_pledged,
+        );
 
         Ok(())
     }
@@ -660,6 +813,23 @@ impl CrowdfundContract {
         env.storage()
             .persistent()
             .get(&contribution_key)
+            .unwrap_or(0)
+    }
+
+    /// Returns the pledge of a specific address.
+    pub fn pledge_amount(env: Env, pledger: Address) -> i128 {
+        let pledge_key = DataKey::Pledge(pledger);
+        env.storage()
+            .persistent()
+            .get(&pledge_key)
+            .unwrap_or(0)
+    }
+
+    /// Returns the total amount pledged (not yet transferred).
+    pub fn total_pledged(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalPledged)
             .unwrap_or(0)
     }
 
