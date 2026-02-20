@@ -61,9 +61,6 @@ pub enum ContractError {
     CampaignStillActive = 3,
     GoalNotReached = 4,
     GoalReached = 5,
-    InvalidGoal = 6,
-    InvalidDeadline = 7,
-    InvalidAmount = 8,
 }
 
 // ── Contract ────────────────────────────────────────────────────────────────
