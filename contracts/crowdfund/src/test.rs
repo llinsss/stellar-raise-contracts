@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, token, Address, Env};
+use soroban_sdk::{testutils::{Address as _, Ledger as _}, token, Address, Env};
 
 use crate::{CrowdfundContract, CrowdfundContractClient};
 
@@ -54,7 +54,6 @@ fn test_initialize() {
 }
 
 #[test]
-#[should_panic(expected = "already initialized")]
 fn test_double_initialize_panics() {
     let (env, client, creator, token_address, _admin) = setup_env();
 
@@ -62,7 +61,10 @@ fn test_double_initialize_panics() {
     let goal: i128 = 1_000_000;
 
     client.initialize(&creator, &token_address, &goal, &deadline);
-    client.initialize(&creator, &token_address, &goal, &deadline); // should panic
+    let result = client.try_initialize(&creator, &token_address, &goal, &deadline);
+    
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::AlreadyInitialized);
 }
 
 #[test]
@@ -104,7 +106,6 @@ fn test_multiple_contributions() {
 }
 
 #[test]
-#[should_panic(expected = "campaign has ended")]
 fn test_contribute_after_deadline_panics() {
     let (env, client, creator, token_address, admin) = setup_env();
 
@@ -118,7 +119,10 @@ fn test_contribute_after_deadline_panics() {
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 500_000);
 
-    client.contribute(&contributor, &500_000); // should panic
+    let result = client.try_contribute(&contributor, &500_000);
+    
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::CampaignEnded);
 }
 
 #[test]
@@ -149,7 +153,6 @@ fn test_withdraw_after_goal_met() {
 }
 
 #[test]
-#[should_panic(expected = "campaign is still active")]
 fn test_withdraw_before_deadline_panics() {
     let (env, client, creator, token_address, admin) = setup_env();
 
@@ -161,11 +164,13 @@ fn test_withdraw_before_deadline_panics() {
     mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
     client.contribute(&contributor, &1_000_000);
 
-    client.withdraw(); // should panic — deadline not passed
+    let result = client.try_withdraw();
+    
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::CampaignStillActive);
 }
 
 #[test]
-#[should_panic(expected = "goal not reached")]
 fn test_withdraw_goal_not_reached_panics() {
     let (env, client, creator, token_address, admin) = setup_env();
 
@@ -180,7 +185,10 @@ fn test_withdraw_goal_not_reached_panics() {
     // Move past deadline, but goal not met.
     env.ledger().set_timestamp(deadline + 1);
 
-    client.withdraw(); // should panic
+    let result = client.try_withdraw();
+    
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::GoalNotReached);
 }
 
 #[test]
@@ -212,7 +220,6 @@ fn test_refund_when_goal_not_met() {
 }
 
 #[test]
-#[should_panic(expected = "goal was reached; use withdraw instead")]
 fn test_refund_when_goal_reached_panics() {
     let (env, client, creator, token_address, admin) = setup_env();
 
@@ -226,5 +233,219 @@ fn test_refund_when_goal_reached_panics() {
 
     env.ledger().set_timestamp(deadline + 1);
 
-    client.refund(); // should panic — goal was met
+    let result = client.try_refund();
+    
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::GoalReached);
+}
+
+// ── Bug Condition Exploration Tests ────────────────────────────────────────
+//
+// **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5**
+//
+// These tests demonstrate the bug on UNFIXED code. They are EXPECTED TO FAIL
+// because the current implementation accepts invalid inputs that should be rejected.
+//
+// CRITICAL: These tests encode the EXPECTED behavior (validation with errors).
+// When run on unfixed code, they will fail because the code doesn't validate.
+// After the fix is implemented, these tests should pass.
+
+#[test]
+fn test_bug_condition_zero_goal_rejected() {
+    // **Property 1: Fault Condition** - Input Validation Rejection
+    // **Validates: Requirements 2.1**
+    
+    let (env, client, creator, token_address, _admin) = setup_env();
+    let deadline = env.ledger().timestamp() + 3600;
+    
+    // Try to initialize with zero goal - should be rejected
+    let result = client.try_initialize(&creator, &token_address, &0i128, &deadline);
+    
+    // Expected behavior: should return InvalidGoal error
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::InvalidGoal);
+}
+
+#[test]
+fn test_bug_condition_negative_goal_rejected() {
+    // **Property 1: Fault Condition** - Input Validation Rejection
+    // **Validates: Requirements 2.2**
+    
+    let (env, client, creator, token_address, _admin) = setup_env();
+    let deadline = env.ledger().timestamp() + 3600;
+    
+    // Try to initialize with negative goal - should be rejected
+    let result = client.try_initialize(&creator, &token_address, &-100i128, &deadline);
+    
+    // Expected behavior: should return InvalidGoal error
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::InvalidGoal);
+}
+
+#[test]
+fn test_bug_condition_past_deadline_rejected() {
+    // **Property 1: Fault Condition** - Input Validation Rejection
+    // **Validates: Requirements 2.3**
+    
+    let (env, client, creator, token_address, _admin) = setup_env();
+    let current_time = env.ledger().timestamp();
+    // Set a past deadline (if current_time is 0, use 0 as past)
+    let past_deadline = if current_time > 100 { current_time - 100 } else { 0 };
+    
+    // Try to initialize with past deadline - should be rejected
+    let result = client.try_initialize(&creator, &token_address, &1_000_000i128, &past_deadline);
+    
+    // Expected behavior: should return InvalidDeadline error
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::InvalidDeadline);
+}
+
+#[test]
+fn test_bug_condition_current_timestamp_deadline_rejected() {
+    // **Property 1: Fault Condition** - Input Validation Rejection
+    // **Validates: Requirements 2.3**
+    
+    let (env, client, creator, token_address, _admin) = setup_env();
+    let current_time = env.ledger().timestamp();
+    
+    // Try to initialize with deadline equal to current time - should be rejected
+    let result = client.try_initialize(&creator, &token_address, &1_000_000i128, &current_time);
+    
+    // Expected behavior: should return InvalidDeadline error
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::InvalidDeadline);
+}
+
+#[test]
+fn test_bug_condition_zero_amount_contribution_rejected() {
+    // **Property 1: Fault Condition** - Input Validation Rejection
+    // **Validates: Requirements 2.4**
+    
+    let (env, client, creator, token_address, admin) = setup_env();
+    let deadline = env.ledger().timestamp() + 3600;
+    client.initialize(&creator, &token_address, &1_000_000i128, &deadline);
+    
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 100_000);
+    
+    // Try to contribute zero amount - should be rejected
+    let result = client.try_contribute(&contributor, &0i128);
+    
+    // Expected behavior: should return InvalidAmount error
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::InvalidAmount);
+}
+
+#[test]
+fn test_bug_condition_negative_amount_contribution_rejected() {
+    // **Property 1: Fault Condition** - Input Validation Rejection
+    // **Validates: Requirements 2.5**
+    
+    let (env, client, creator, token_address, admin) = setup_env();
+    let deadline = env.ledger().timestamp() + 3600;
+    client.initialize(&creator, &token_address, &1_000_000i128, &deadline);
+    
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 100_000);
+    
+    // Try to contribute negative amount - should be rejected
+    let result = client.try_contribute(&contributor, &-50i128);
+    
+    // Expected behavior: should return InvalidAmount error
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::InvalidAmount);
+}
+
+// ── Preservation Property Tests ────────────────────────────────────────────
+//
+// **Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5**
+//
+// **Property 2: Preservation** - Valid Input Acceptance
+//
+// These tests verify that all successful execution paths work correctly
+// on the UNFIXED code. These behaviors MUST be preserved after the fix.
+//
+// IMPORTANT: These tests are EXPECTED TO PASS on unfixed code.
+// When they pass, they confirm the baseline behavior to preserve.
+
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn prop_preservation_valid_initialization(
+        goal in 1i128..10_000_000i128,
+        deadline_offset in 1u64..10_000u64,
+    ) {
+        // **Property 2: Preservation** - Valid Input Acceptance
+        // **Validates: Requirement 3.1**
+        //
+        // This test verifies that valid initialization (goal > 0, deadline > now)
+        // continues to work correctly after the fix.
+        
+        let (env, client, creator, token_address, _admin) = setup_env();
+        let deadline = env.ledger().timestamp() + deadline_offset;
+        
+        // Valid initialization should succeed
+        client.initialize(&creator, &token_address, &goal, &deadline);
+        
+        // Verify state is stored correctly
+        prop_assert_eq!(client.goal(), goal);
+        prop_assert_eq!(client.deadline(), deadline);
+        prop_assert_eq!(client.total_raised(), 0);
+    }
+    
+    #[test]
+    fn prop_preservation_valid_contribution(
+        goal in 1_000_000i128..10_000_000i128,
+        deadline_offset in 100u64..10_000u64,
+        contribution_amount in 1i128..1_000_000i128,
+    ) {
+        // **Property 2: Preservation** - Valid Input Acceptance
+        // **Validates: Requirement 3.2**
+        //
+        // This test verifies that valid contributions (amount > 0, before deadline)
+        // continue to work correctly after the fix.
+        
+        let (env, client, creator, token_address, admin) = setup_env();
+        let deadline = env.ledger().timestamp() + deadline_offset;
+        
+        client.initialize(&creator, &token_address, &goal, &deadline);
+        
+        let contributor = Address::generate(&env);
+        mint_to(&env, &token_address, &admin, &contributor, contribution_amount);
+        
+        // Valid contribution should succeed
+        client.contribute(&contributor, &contribution_amount);
+        
+        // Verify state is updated correctly
+        prop_assert_eq!(client.total_raised(), contribution_amount);
+        prop_assert_eq!(client.contribution(&contributor), contribution_amount);
+    }
+    
+    #[test]
+    fn prop_preservation_existing_error_paths(
+        goal in 1_000_000i128..10_000_000i128,
+        deadline_offset in 100u64..1000u64,
+    ) {
+        // **Property 2: Preservation** - Valid Input Acceptance
+        // **Validates: Requirement 3.3**
+        //
+        // This test verifies that existing error paths (like CampaignEnded)
+        // continue to work correctly after the fix.
+        
+        let (env, client, creator, token_address, admin) = setup_env();
+        let deadline = env.ledger().timestamp() + deadline_offset;
+        
+        client.initialize(&creator, &token_address, &goal, &deadline);
+        
+        // Move past deadline
+        env.ledger().set_timestamp(deadline + 1);
+        
+        let contributor = Address::generate(&env);
+        mint_to(&env, &token_address, &admin, &contributor, 100_000);
+        
+        // Contribution after deadline should still fail with CampaignEnded
+        let result = client.try_contribute(&contributor, &100_000);
+        prop_assert!(result.is_err());
+    }
 }
