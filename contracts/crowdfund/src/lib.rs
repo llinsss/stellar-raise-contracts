@@ -1,10 +1,19 @@
 #![no_std]
 #![allow(missing_docs)]
 
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, String, Symbol, Vec};
 
 #[cfg(test)]
 mod test;
+
+// ── Version ─────────────────────────────────────────────────────────────────
+
+/// Contract version constant.
+///
+/// This constant must be manually incremented with every contract upgrade
+/// (see Issue #38). External tools use this to detect logic changes at a
+/// given contract address.
+const CONTRACT_VERSION: u32 = 1;
 
 // ── Data Types ──────────────────────────────────────────────────────────────
 
@@ -28,6 +37,14 @@ pub enum Status {
 pub struct RoadmapItem {
     pub date: u64,
     pub description: String,
+}
+
+/// Platform configuration for fee handling.
+#[derive(Clone)]
+#[contracttype]
+pub struct PlatformConfig {
+    pub address: Address,
+    pub fee_bps: u32,
 }
 
 /// Represents all storage keys used by the crowdfund contract.
@@ -74,9 +91,19 @@ pub enum DataKey {
     Roadmap,
     /// The address authorized to upgrade the contract.
     Admin,
+    /// Campaign title.
+    Title,
+    /// Campaign description.
+    Description,
+    /// Campaign social links.
+    SocialLinks,
+    /// Platform configuration for fee handling.
+    PlatformConfig,
 }
 
 // ── Contract Error ──────────────────────────────────────────────────────────
+
+use soroban_sdk::contracterror;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -118,7 +145,7 @@ impl CrowdfundContract {
         deadline: u64,
         min_contribution: i128,
         platform_config: Option<PlatformConfig>,
-    ) {
+    ) -> Result<(), ContractError> {
         // Prevent re-initialization.
         if env.storage().instance().has(&DataKey::Creator) {
             return Err(ContractError::AlreadyInitialized);
@@ -141,6 +168,7 @@ impl CrowdfundContract {
             .instance()
             .set(&DataKey::MinContribution, &min_contribution);
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
+        env.storage().instance().set(&DataKey::Status, &Status::Active);
 
         let empty_contributors: Vec<Address> = Vec::new(&env);
         env.storage()
@@ -151,6 +179,8 @@ impl CrowdfundContract {
         env.storage()
             .instance()
             .set(&DataKey::Roadmap, &empty_roadmap);
+
+        Ok(())
     }
 
     /// Contribute tokens to the campaign.
@@ -224,7 +254,7 @@ impl CrowdfundContract {
     ///
     /// If a platform fee is configured, deducts the fee and transfers it to
     /// the platform address, then sends the remainder to the creator.
-    pub fn withdraw(env: Env) {
+    pub fn withdraw(env: Env) -> Result<(), ContractError> {
         let status: Status = env.storage().instance().get(&DataKey::Status).unwrap();
         if status != Status::Active {
             panic!("campaign is not active");
@@ -283,11 +313,13 @@ impl CrowdfundContract {
             ("campaign", "withdrawn"),
             (creator.clone(), total),
         );
+
+        Ok(())
     }
 
     /// Refund all contributors — callable by anyone after the deadline
     /// if the goal was **not** met.
-    pub fn refund(env: Env) {
+    pub fn refund(env: Env) -> Result<(), ContractError> {
         let status: Status = env.storage().instance().get(&DataKey::Status).unwrap();
         if status != Status::Active {
             panic!("campaign is not active");
@@ -335,6 +367,8 @@ impl CrowdfundContract {
         env.storage()
             .instance()
             .set(&DataKey::Status, &Status::Refunded);
+
+        Ok(())
     }
 
     /// Cancel the campaign and refund all contributors — callable only by
@@ -580,7 +614,7 @@ impl CrowdfundContract {
 
     /// Returns the campaign title.
     pub fn title(env: Env) -> String {
-        let empty = String::from(&String::from_slice(&env, ""));
+        let empty = String::from_str(&env, "");
         env.storage()
             .instance()
             .get(&DataKey::Title)
@@ -589,7 +623,7 @@ impl CrowdfundContract {
 
     /// Returns the campaign description.
     pub fn description(env: Env) -> String {
-        let empty = String::from(&String::from_slice(&env, ""));
+        let empty = String::from_str(&env, "");
         env.storage()
             .instance()
             .get(&DataKey::Description)
@@ -598,10 +632,19 @@ impl CrowdfundContract {
 
     /// Returns the campaign social links.
     pub fn socials(env: Env) -> String {
-        let empty = String::from(&String::from_slice(&env, ""));
+        let empty = String::from_str(&env, "");
         env.storage()
             .instance()
             .get(&DataKey::SocialLinks)
             .unwrap_or(empty)
+    }
+
+    /// Returns the contract version.
+    ///
+    /// This view function allows external tools to detect which version of the
+    /// contract logic is currently running at this address. The version must be
+    /// manually incremented with every contract upgrade (see Issue #38).
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 }
