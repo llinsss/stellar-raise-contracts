@@ -34,14 +34,21 @@ pub struct RoadmapItem {
 #[derive(Clone)]
 #[contracttype]
 pub struct CampaignStats {
+    /// Total amount raised so far.
     pub total_raised: i128,
+    /// The funding goal.
     pub goal: i128,
+    /// Progress towards goal in basis points (10000 = 100%).
     pub progress_bps: u32,
+    /// Number of contributors.
     pub contributor_count: u32,
+    /// Average contribution amount.
     pub average_contribution: i128,
+    /// Largest contribution amount.
     pub largest_contribution: i128,
 }
 
+/// Represents all storage keys used by the crowdfund contract.
 #[derive(Clone)]
 #[contracttype]
 pub enum DataKey {
