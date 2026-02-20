@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::{Address as _, Ledger}, token, Address, Env};
+use soroban_sdk::{testutils::{Address as _, Ledger, Events}, token, Address, Env};
 
 use crate::{CrowdfundContract, CrowdfundContractClient};
 
@@ -76,7 +76,7 @@ fn test_contribute() {
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 500_000);
 
-    client.contribute(&contributor, &500_000);
+    client.contribute(&contributor, &500_000, &None);
 
     assert_eq!(client.total_raised(), 500_000);
     assert_eq!(client.contribution(&contributor), 500_000);
@@ -95,8 +95,8 @@ fn test_multiple_contributions() {
     mint_to(&env, &token_address, &admin, &alice, 600_000);
     mint_to(&env, &token_address, &admin, &bob, 400_000);
 
-    client.contribute(&alice, &600_000);
-    client.contribute(&bob, &400_000);
+    client.contribute(&alice, &600_000, &None);
+    client.contribute(&bob, &400_000, &None);
 
     assert_eq!(client.total_raised(), 1_000_000);
     assert_eq!(client.contribution(&alice), 600_000);
@@ -118,7 +118,7 @@ fn test_contribute_after_deadline_panics() {
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 500_000);
 
-    client.contribute(&contributor, &500_000); // should panic
+    client.contribute(&contributor, &500_000, &None); // should panic
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn test_withdraw_after_goal_met() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
-    client.contribute(&contributor, &1_000_000);
+    client.contribute(&contributor, &1_000_000, &None);
 
     assert_eq!(client.total_raised(), goal);
 
@@ -159,7 +159,7 @@ fn test_withdraw_before_deadline_panics() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
-    client.contribute(&contributor, &1_000_000);
+    client.contribute(&contributor, &1_000_000, &None);
 
     client.withdraw(); // should panic — deadline not passed
 }
@@ -175,7 +175,7 @@ fn test_withdraw_goal_not_reached_panics() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 500_000);
-    client.contribute(&contributor, &500_000);
+    client.contribute(&contributor, &500_000, &None);
 
     // Move past deadline, but goal not met.
     env.ledger().set_timestamp(deadline + 1);
@@ -196,8 +196,8 @@ fn test_refund_when_goal_not_met() {
     mint_to(&env, &token_address, &admin, &alice, 300_000);
     mint_to(&env, &token_address, &admin, &bob, 200_000);
 
-    client.contribute(&alice, &300_000);
-    client.contribute(&bob, &200_000);
+    client.contribute(&alice, &300_000, &None);
+    client.contribute(&bob, &200_000, &None);
 
     // Move past deadline — goal not met.
     env.ledger().set_timestamp(deadline + 1);
@@ -222,7 +222,7 @@ fn test_refund_when_goal_reached_panics() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
-    client.contribute(&contributor, &1_000_000);
+    client.contribute(&contributor, &1_000_000, &None);
 
     env.ledger().set_timestamp(deadline + 1);
 
@@ -240,7 +240,7 @@ fn test_double_withdraw_panics() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
-    client.contribute(&contributor, &1_000_000);
+    client.contribute(&contributor, &1_000_000, &None);
 
     env.ledger().set_timestamp(deadline + 1);
 
@@ -259,7 +259,7 @@ fn test_double_refund_panics() {
 
     let alice = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &alice, 500_000);
-    client.contribute(&alice, &500_000);
+    client.contribute(&alice, &500_000, &None);
 
     env.ledger().set_timestamp(deadline + 1);
 
@@ -293,8 +293,8 @@ fn test_cancel_with_contributions() {
     mint_to(&env, &token_address, &admin, &alice, 300_000);
     mint_to(&env, &token_address, &admin, &bob, 200_000);
 
-    client.contribute(&alice, &300_000);
-    client.contribute(&bob, &200_000);
+    client.contribute(&alice, &300_000, &None);
+    client.contribute(&bob, &200_000, &None);
 
     client.cancel();
 
@@ -338,4 +338,100 @@ fn test_cancel_by_non_creator_panics() {
     }]);
 
     client.cancel();
+}
+
+// ── Referral Tests ──────────────────────────────────────────────────────────
+
+#[test]
+fn test_contribute_with_referral() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    client.initialize(&creator, &token_address, &goal, &deadline);
+
+    let referrer = Address::generate(&env);
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 500_000);
+
+    client.contribute(&contributor, &500_000, &Some(referrer.clone()));
+
+    assert_eq!(client.referral_count(&referrer), 1);
+}
+
+#[test]
+fn test_referral_count_increments() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    client.initialize(&creator, &token_address, &goal, &deadline);
+
+    let referrer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    mint_to(&env, &token_address, &admin, &alice, 200_000);
+    mint_to(&env, &token_address, &admin, &bob, 300_000);
+
+    client.contribute(&alice, &200_000, &Some(referrer.clone()));
+    assert_eq!(client.referral_count(&referrer), 1);
+
+    client.contribute(&bob, &300_000, &Some(referrer.clone()));
+    assert_eq!(client.referral_count(&referrer), 2);
+}
+
+#[test]
+fn test_referral_count_unaffected_by_no_referral() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    client.initialize(&creator, &token_address, &goal, &deadline);
+
+    let referrer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    mint_to(&env, &token_address, &admin, &alice, 200_000);
+    mint_to(&env, &token_address, &admin, &bob, 300_000);
+
+    client.contribute(&alice, &200_000, &Some(referrer.clone()));
+    assert_eq!(client.referral_count(&referrer), 1);
+
+    client.contribute(&bob, &300_000, &None);
+    assert_eq!(client.referral_count(&referrer), 1);
+}
+
+#[test]
+#[should_panic(expected = "cannot refer yourself")]
+fn test_self_referral_rejected() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    client.initialize(&creator, &token_address, &goal, &deadline);
+
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 500_000);
+
+    client.contribute(&contributor, &500_000, &Some(contributor.clone()));
+}
+
+#[test]
+fn test_referral_address_in_event() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    client.initialize(&creator, &token_address, &goal, &deadline);
+
+    let referrer = Address::generate(&env);
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 500_000);
+
+    client.contribute(&contributor, &500_000, &Some(referrer.clone()));
+
+    let events = env.events().all();
+    assert!(events.len() > 0);
 }

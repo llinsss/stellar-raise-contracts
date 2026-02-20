@@ -35,6 +35,8 @@ pub enum DataKey {
     Contributors,
     /// Campaign status (Active, Successful, Refunded).
     Status,
+    /// Total successful referrals per address.
+    ReferralCount(Address),
 }
 
 // ── Contract ────────────────────────────────────────────────────────────────
@@ -82,8 +84,14 @@ impl CrowdfundContract {
     ///
     /// The contributor must authorize the call. Contributions are rejected
     /// after the deadline has passed.
-    pub fn contribute(env: Env, contributor: Address, amount: i128) {
+    pub fn contribute(env: Env, contributor: Address, amount: i128, referral: Option<Address>) {
         contributor.require_auth();
+
+        if let Some(ref referrer) = referral {
+            if referrer == &contributor {
+                panic!("cannot refer yourself");
+            }
+        }
 
         let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
         if env.ledger().timestamp() > deadline {
@@ -127,11 +135,27 @@ impl CrowdfundContract {
             .get(&DataKey::Contributors)
             .unwrap();
         if !contributors.contains(&contributor) {
-            contributors.push_back(contributor);
+            contributors.push_back(contributor.clone());
             env.storage()
                 .instance()
                 .set(&DataKey::Contributors, &contributors);
         }
+
+        if let Some(ref referrer) = referral {
+            let count: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::ReferralCount(referrer.clone()))
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&DataKey::ReferralCount(referrer.clone()), &(count + 1));
+        }
+
+        env.events().publish(
+            ("campaign", "contributed"),
+            (contributor, amount, referral),
+        );
     }
 
     /// Withdraw raised funds — only callable by the creator after the
@@ -282,6 +306,14 @@ impl CrowdfundContract {
         env.storage()
             .instance()
             .get(&DataKey::Contribution(contributor))
+            .unwrap_or(0)
+    }
+
+    /// Returns the total successful referrals for a referrer.
+    pub fn referral_count(env: Env, referrer: Address) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::ReferralCount(referrer))
             .unwrap_or(0)
     }
 }
