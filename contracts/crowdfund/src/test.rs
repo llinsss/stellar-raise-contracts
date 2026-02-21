@@ -1268,3 +1268,29 @@ fn test_withdraw_after_deadline_panics() {
 
     client.withdraw_contribution(&contributor, &50_000); // should panic
 }
+
+// ── Initialization Check Tests ─────────────────────────────────────────────
+
+#[test]
+fn test_is_initialized_false_before_initialize() {
+    let env = Env::default();
+    let contract_id = env.register(CrowdfundContract, ());
+    let client = CrowdfundContractClient::new(&env, &contract_id);
+
+    assert_eq!(client.is_initialized(), false);
+}
+
+#[test]
+fn test_is_initialized_true_after_initialize() {
+    let (env, client, creator, token_address, _admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    let title = soroban_sdk::String::from_str(&env, "Test Campaign");
+    let description = soroban_sdk::String::from_str(&env, "Test Description");
+
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &title, &description, &None);
+
+    assert_eq!(client.is_initialized(), true);
+}

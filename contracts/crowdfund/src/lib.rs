@@ -820,4 +820,9 @@ impl CrowdfundContract {
     pub fn version(_env: Env) -> u32 {
         CONTRACT_VERSION
     }
+
+    /// Returns true if the contract has been initialized.
+    pub fn is_initialized(env: Env) -> bool {
+        env.storage().instance().has(&DataKey::Creator)
+    }
 }
