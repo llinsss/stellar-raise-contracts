@@ -820,4 +820,14 @@ impl CrowdfundContract {
     pub fn version(_env: Env) -> u32 {
         CONTRACT_VERSION
     }
+
+    /// Returns the number of unique contributors.
+    pub fn contributor_count(env: Env) -> u32 {
+        let contributors: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contributors)
+            .unwrap_or_else(|| Vec::new(&env));
+        contributors.len()
+    }
 }
