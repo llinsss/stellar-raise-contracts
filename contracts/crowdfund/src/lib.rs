@@ -152,6 +152,10 @@ impl CrowdfundContract {
             return Err(ContractError::AlreadyInitialized);
         }
 
+        if category.len() == 0 {
+            panic!("category must not be empty");
+        }
+
         creator.require_auth();
 
         // Validate platform fee if provided.
@@ -848,6 +852,16 @@ impl CrowdfundContract {
             .instance()
             .get(&DataKey::MinContribution)
             .unwrap()
+    }
+
+    /// Returns the primary campaign category.
+    pub fn category(env: Env) -> soroban_sdk::String {
+        env.storage().instance().get(&DataKey::Category).unwrap()
+    }
+
+    /// Returns the optional descriptive tags.
+    pub fn tags(env: Env) -> Vec<soroban_sdk::String> {
+        env.storage().instance().get(&DataKey::Tags).unwrap_or(Vec::new(&env))
     }
 
     /// Returns comprehensive campaign statistics.
