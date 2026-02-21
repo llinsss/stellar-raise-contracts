@@ -81,6 +81,8 @@ pub struct CampaignInfo {
     pub goal: i128,
     pub deadline: u64,
     pub total_raised: i128,
+    pub title: String,
+    pub description: String,
 }
 
 #[derive(Clone)]
@@ -147,6 +149,8 @@ impl CrowdfundContract {
     /// * `goal`               – The funding goal (in the token's smallest unit).
     /// * `deadline`           – The campaign deadline as a ledger timestamp.
     /// * `min_contribution`   – The minimum contribution amount.
+    /// * `title`              – The campaign title.
+    /// * `description`        – The campaign description.
     /// * `platform_config`    – Optional platform configuration (address and fee in basis points).
     ///
     /// # Panics
@@ -159,6 +163,8 @@ impl CrowdfundContract {
         goal: i128,
         deadline: u64,
         min_contribution: i128,
+        title: String,
+        description: String,
         platform_config: Option<PlatformConfig>,
     ) -> Result<(), ContractError> {
         // Prevent re-initialization.
@@ -192,6 +198,8 @@ impl CrowdfundContract {
         env.storage()
             .instance()
             .set(&DataKey::MinContribution, &min_contribution);
+        env.storage().instance().set(&DataKey::Title, &title);
+        env.storage().instance().set(&DataKey::Description, &description);
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
         env.storage()
             .instance()
@@ -398,17 +406,14 @@ impl CrowdfundContract {
     /// refunds.
     ///
     /// # Example
-    /// 
-```
-bash
+    /// ```bash
     /// stellar contract invoke \
     ///   --id <CONTRACT_ID> \
     ///   --network testnet \
     ///   --source <YOUR_SECRET_KEY> \
     ///   -- refund_single \
     ///   --contributor <YOUR_ADDRESS>
-    /// 
-```
+    /// ```
     pub fn refund_single(env: Env, contributor: Address) -> Result<(), ContractError> {
         // Require contributor authorization.
         contributor.require_auth();
@@ -460,14 +465,15 @@ bash
 
         // Update total raised.
         let new_total = total - amount;
-                    .extend_ttl(&contribution_key, 100, 100);
-            }
-        }
+        env.storage().instance().set(&DataKey::TotalRaised, &new_total);
 
-        env.storage().instance().set(&DataKey::TotalRaised, &0i128);
-        env.storage()
-            .instance()
-            .set(&DataKey::Status, &Status::Cancelled);
+        // Emit refund event
+        env.events().publish(
+            ("campaign", "refunded"),
+            (contributor.clone(), amount),
+        );
+
+        Ok(())
     }
 
     /// Upgrade the contract to a new WASM implementation — admin-only.
@@ -625,6 +631,8 @@ bash
         let goal: i128 = env.storage().instance().get(&DataKey::Goal).unwrap();
         let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
         let total_raised: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0);
+        let title: String = env.storage().instance().get(&DataKey::Title).unwrap_or_else(|| String::from_str(&env, ""));
+        let description: String = env.storage().instance().get(&DataKey::Description).unwrap_or_else(|| String::from_str(&env, ""));
 
         CampaignInfo {
             creator,
@@ -632,6 +640,8 @@ bash
             goal,
             deadline,
             total_raised,
+            title,
+            description,
         }
     }
  
@@ -680,81 +690,6 @@ bash
                     .instance()
                     .get(&DataKey::Contribution(contributor))
                     .unwrap_or(0);
-                if amount > largest {
-                    largest = amount;
-                }
-            }
-            (average, largest)
-        };
-
-        CampaignStats {
-            total_raised,
-            goal,
-            progress_bps,
-            contributor_count,
-            average_contribution,
-            largest_contribution,
-        }
-    }
-
-    /// Returns the campaign title.
-    pub fn title(env: Env) -> String {
-        let empty = String::from_str(&env, "");
-        env.storage()
-            .instance()
-            .get(&DataKey::Title)
-            .unwrap_or(empty)
-    }
-
-    /// Returns the campaign description.
-    pub fn description(env: Env) -> String {
-        let empty = String::from_str(&env, "");
-        env.storage()
-            .instance()
-            .get(&DataKey::Description)
-            .unwrap_or(empty)
-    }
-
-    /// Returns the campaign social links.
-    pub fn socials(env: Env) -> String {
-        let empty = String::from_str(&env, "");
-        env.storage()
-            .instance()
-            .get(&DataKey::SocialLinks)
-            .unwrap_or(empty)
-    }
-
-    /// Returns the contract version.
-    ///
-    /// This view function allows external tools to detect which version of the
-    /// contract logic is currently running at this address. The version must be
-    /// manually incremented with every contract upgrade (see Issue #38).
-    pub fn version(_env: Env) -> u32 {
-        CONTRACT_VERSION
-    }
-}
-                10_000
-            } else {
-                raw as u32
-            }
-        } else {
-            0
-        };
-
-        let contributor_count = contributors.len();
-        let (average_contribution, largest_contribution) = if contributor_count == 0 {
-            (0, 0)
-        } else {
-            let average = total_raised / contributor_count as i128;
-            let mut largest = 0i128;
-            for contributor in contributors.iter() {
-                let amount: i128 = env
-                    .storage()
-                    .instance()
-                    .get(&DataKey::Contribution(contributor))
-                    .unwrap_or(0);
-                let amount: i128 = env.storage().persistent().get(&DataKey::Contribution(contributor)).unwrap_or(0);
-
                 if amount > largest {
                     largest = amount;
                 }
