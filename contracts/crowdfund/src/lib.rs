@@ -1,9 +1,16 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, token, Address, Env, Vec};
 
 #[cfg(test)]
 mod test;
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum ContractError {
+    NotWhitelisted = 1,
+}
 
 // ── Data Keys ───────────────────────────────────────────────────────────────
 
@@ -48,6 +55,10 @@ pub enum DataKey {
     Status,
     /// Minimum contribution amount.
     MinContribution,
+    /// Whether this campaign is in "whitelist-only" mode.
+    WhitelistEnabled,
+    /// Whitelist status for a specific address.
+    Whitelist(Address),
 }
 
 // ── Contract ────────────────────────────────────────────────────────────────
@@ -94,12 +105,54 @@ impl CrowdfundContract {
             .set(&DataKey::Contributors, &empty_contributors);
     }
 
+    /// Adds addresses to the campaign's whitelist.
+    ///
+    /// This function is restricted to the campaign creator and can only be
+    /// called while the campaign is Active.
+    pub fn add_to_whitelist(env: Env, addresses: Vec<Address>) {
+        if addresses.is_empty() {
+            panic!("addresses list must not be empty");
+        }
+
+        let status: Status = env.storage().instance().get(&DataKey::Status).unwrap();
+        if status != Status::Active {
+            panic!("campaign is not active");
+        }
+
+        let creator: Address = env.storage().instance().get(&DataKey::Creator).unwrap();
+        creator.require_auth();
+
+        if !env.storage().instance().has(&DataKey::WhitelistEnabled) {
+            env.storage().instance().set(&DataKey::WhitelistEnabled, &true);
+        }
+
+        for address in addresses.iter() {
+            env.storage().instance().set(&DataKey::Whitelist(address), &true);
+        }
+    }
+
     /// Contribute tokens to the campaign.
     ///
     /// The contributor must authorize the call. Contributions are rejected
     /// after the deadline has passed.
     pub fn contribute(env: Env, contributor: Address, amount: i128) {
         contributor.require_auth();
+
+        let whitelist_enabled: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistEnabled)
+            .unwrap_or(false);
+        if whitelist_enabled {
+            let is_whitelisted: bool = env
+                .storage()
+                .instance()
+                .get(&DataKey::Whitelist(contributor.clone()))
+                .unwrap_or(false);
+            if !is_whitelisted {
+                soroban_sdk::panic_with_error!(&env, ContractError::NotWhitelisted);
+            }
+        }
 
         let min_contribution: i128 = env.storage().instance().get(&DataKey::MinContribution).unwrap();
         if amount < min_contribution {
@@ -309,6 +362,14 @@ impl CrowdfundContract {
     /// Returns the minimum contribution amount.
     pub fn min_contribution(env: Env) -> i128 {
         env.storage().instance().get(&DataKey::MinContribution).unwrap()
+    }
+ 
+    /// Returns true if the address is whitelisted.
+    pub fn is_whitelisted(env: Env, address: Address) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Whitelist(address))
+            .unwrap_or(false)
     }
 
     /// Returns comprehensive campaign statistics.
