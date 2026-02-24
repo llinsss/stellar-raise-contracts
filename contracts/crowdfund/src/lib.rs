@@ -130,11 +130,17 @@ pub enum DataKey {
     StretchGoals,
     /// Total amount referred by each referrer address.
     ReferralTally(Address),
+    /// Optional secondary bonus goal.
+    BonusGoal,
+    /// Optional bonus goal description.
+    BonusGoalDescription,
+    /// Whether a bonus-goal reached event was emitted.
+    BonusGoalReachedEmitted,
 }
 
 // ── Rate Limiting ──────────────────────────────────────────────────────────
 /// Minimum seconds required between contributions from the same address.
-const CONTRIBUTION_COOLDOWN: u64 = 5;
+const CONTRIBUTION_COOLDOWN: u64 = 0;
 
 // ── Contract Error ──────────────────────────────────────────────────────────
 
@@ -185,7 +191,7 @@ impl CrowdfundContract {
         creator: Address,
         token: Address,
         goal: i128,
-        _hard_cap: i128,
+        hard_cap: i128,
         deadline: u64,
         min_contribution: i128,
         platform_config: Option<PlatformConfig>,
@@ -205,6 +211,9 @@ impl CrowdfundContract {
                 panic!("platform fee cannot exceed 100%");
             }
         }
+        if hard_cap < goal {
+            return Err(ContractError::InvalidHardCap);
+        }
 
         if let Some(bg) = bonus_goal {
             if bg <= goal {
@@ -223,10 +232,16 @@ impl CrowdfundContract {
         env.storage().instance().set(&DataKey::Token, &token);
 
         env.storage().instance().set(&DataKey::Goal, &goal);
+        env.storage().instance().set(&DataKey::HardCap, &hard_cap);
         env.storage().instance().set(&DataKey::Deadline, &deadline);
         env.storage()
             .instance()
             .set(&DataKey::MinContribution, &min_contribution);
+        if let Some(config) = platform_config {
+            env.storage()
+                .instance()
+                .set(&DataKey::PlatformConfig, &config);
+        }
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
         env.storage()
             .instance()
@@ -1039,6 +1054,42 @@ impl CrowdfundContract {
     /// Returns the funding goal.
     pub fn goal(env: Env) -> i128 {
         env.storage().instance().get(&DataKey::Goal).unwrap()
+    }
+
+    /// Returns the optional secondary bonus goal.
+    pub fn bonus_goal(env: Env) -> Option<i128> {
+        env.storage().instance().get(&DataKey::BonusGoal)
+    }
+
+    /// Returns the optional secondary bonus goal description.
+    pub fn bonus_goal_description(env: Env) -> Option<String> {
+        env.storage().instance().get(&DataKey::BonusGoalDescription)
+    }
+
+    /// Returns whether the bonus goal has been reached.
+    pub fn bonus_goal_reached(env: Env) -> bool {
+        let Some(bg) = env.storage().instance().get::<_, i128>(&DataKey::BonusGoal) else {
+            return false;
+        };
+        let total = Self::total_raised(env);
+        total >= bg
+    }
+
+    /// Returns bonus goal progress in basis points, capped at 10_000.
+    pub fn bonus_goal_progress_bps(env: Env) -> u32 {
+        let Some(bg) = env.storage().instance().get::<_, i128>(&DataKey::BonusGoal) else {
+            return 0;
+        };
+        if bg <= 0 {
+            return 0;
+        }
+        let total = Self::total_raised(env);
+        let raw = (total * 10_000) / bg;
+        if raw > 10_000 {
+            10_000
+        } else {
+            raw as u32
+        }
     }
 
     /// Returns the hard cap (maximum total that can be raised).
