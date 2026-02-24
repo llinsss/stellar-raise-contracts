@@ -1,5 +1,7 @@
 # 🚀 Stellar Raise Contracts
 
+![codecov](https://codecov.io/gh/Mac-5/stellar-raise-contracts/branch/develop/graph/badge.svg)
+
 A **crowdfunding smart contract** built on the [Stellar](https://stellar.org/) network using [Soroban](https://soroban.stellar.org/).
 
 ## Overview
@@ -235,6 +237,11 @@ soroban contract invoke \
   --deadline <DEADLINE> \
   --min_contribution <MIN>
 ```
+
+
+## Code of Conduct
+
+Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before contributing.
 
 ## Changelog
 
